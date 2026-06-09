@@ -1,18 +1,21 @@
-# Swift YouTube Transcript
+# Swift YouTube Metadata
 
-A Swift library for fetching YouTube video transcripts and metadata. No API key required, no browser needed — works entirely through YouTube's InnerTube API.
+A dependency-free Swift library for fetching YouTube video transcripts and metadata. It uses YouTube's InnerTube API with the ANDROID client to reliably retrieve captions and video details with no API key, browser, or authentication — returning transcript segments and rich video metadata from a single call.
 
 ## Features
 
-- 🎯 **Simple API** — fetch transcripts with a single async call
-- 📝 **Full transcripts** with timestamps, durations, and language info
-- 📊 **Video metadata** — title, author, views, duration, keywords, description, thumbnails
-- 🌍 **Multi-language support** — request specific languages with automatic fallback
-- 📋 **List available transcripts** — check what's available before fetching
-- 🔒 **No API key required** — uses YouTube's public InnerTube API
-- 🍎 **Cross-platform** — macOS, iOS, tvOS, watchOS
-- ⚡ **Async/await** native — built for modern Swift concurrency
-- 🛡️ **Typed error handling** — specific errors for every failure case
+- 📝 **Transcript fetching** — `fetch(_:)` returns a `FetchedTranscript` with timed segments, plain text, and timestamped text
+- 🎬 **Video metadata included** — the same call also returns `VideoMetadata` (title, author, description, view count, duration, keywords, thumbnail) at no extra request
+- 🌐 **Language preferences** — pass an ordered list of language codes; manual transcripts are preferred over auto-generated, with prefix matching (`"en"` matches `"en-US"`)
+- 📋 **Track discovery** — `list(_:)` returns a `TranscriptList` of available tracks without downloading any transcript content
+- 🔗 **Flexible input** — accepts raw 11-character video IDs and watch, short (`youtu.be`), embed, Shorts, live, and `/v/` URLs
+- 🤖 **No API key** — talks directly to YouTube's InnerTube API using the ANDROID client, whose caption URLs work without browser session tokens
+- 🍪 **Consent handling** — automatically detects and clears YouTube's EU cookie-consent interstitial
+- ⏱️ **Formatting helpers** — segments and metadata expose `formattedStart`, `formattedDuration`, and `formattedViewCount`
+- 🛡️ **Typed errors** — `YouTubeTranscriptError` distinguishes IP blocks, disabled transcripts, unavailable videos, PO-token requirements, and more, each carrying the relevant video ID
+- 📦 **Sendable & Codable models** — transcript and metadata types are `Sendable`, and the segment, track, and metadata models are `Codable`
+
+> **Note:** The module is named `YouTubeTranscript` — import it with `import YouTubeTranscript`.
 
 ## Requirements
 
@@ -24,217 +27,128 @@ A Swift library for fetching YouTube video transcripts and metadata. No API key 
 
 ### Swift Package Manager
 
-Add the following to your `Package.swift`:
-
 ```swift
 dependencies: [
-.package(url: "https://github.com/arraypress/swift-youtube-transcript.git", from: "1.0.0")
+    .package(url: "https://github.com/arraypress/swift-youtube-metadata.git", from: "1.0.0")
 ]
 ```
 
-Or in Xcode:
-1. File → Add Package Dependencies
-2. Enter the repository URL
-3. Choose version requirements
+Or in Xcode: **File → Add Package Dependencies…** and enter `https://github.com/arraypress/swift-youtube-metadata`.
 
 ## Usage
 
-### Fetch a Transcript
+### Fetching a transcript
 
 ```swift
 import YouTubeTranscript
 
-// Using a video ID
+// Supports video IDs and full URLs
 let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ")
-print(result.plainText)
 
-// Using a full URL (all formats supported)
-let result = try await YouTubeTranscript.fetch("https://youtube.com/watch?v=dQw4w9WgXcQ")
-let result = try await YouTubeTranscript.fetch("https://youtu.be/dQw4w9WgXcQ")
+print(result.plainText)
+print(result.video?.title ?? "")
+print("Segments: \(result.count)")
+print("Type: \(result.typeLabel)")           // "manual" or "auto"
+print("Duration: \(result.formattedDuration)")
 ```
 
-### Access Video Metadata
-
-Metadata is extracted from the same API call — no additional requests.
+### Language preferences
 
 ```swift
+import YouTubeTranscript
+
+// Prefer German, then English
+let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ", languages: ["de", "en"])
+print(result.language)
+```
+
+### Timed segments
+
+```swift
+import YouTubeTranscript
+
+let result = try await YouTubeTranscript.fetch("https://youtu.be/dQw4w9WgXcQ")
+
+for segment in result.segments {
+    print("[\(segment.formattedStart)] \(segment.text)")
+}
+
+// Or all at once
+print(result.timestampedText)
+```
+
+### Listing available transcripts
+
+```swift
+import YouTubeTranscript
+
+let list = try await YouTubeTranscript.list("dQw4w9WgXcQ")
+
+print("Manual: \(list.manualTracks.count)")
+print("Auto: \(list.generatedTracks.count)")
+print("Languages: \(list.availableLanguages)")
+
+if let best = list.findTrack(languages: ["en", "de"]) {
+    print("Best match: \(best.language) (\(best.typeLabel))")
+}
+```
+
+### Video metadata
+
+```swift
+import YouTubeTranscript
+
 let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ")
 
 if let video = result.video {
-print("Title: \(video.title)")
-print("Author: \(video.author)")
-print("Views: \(video.formattedViewCount)")
-print("Duration: \(video.formattedDuration)")
-print("Keywords: \(video.keywords.joined(separator: ", "))")
-print("Description: \(video.description)")
-print("Thumbnail: \(video.thumbnailUrl ?? "")")
-print("URL: \(video.url)")
+    print("\(video.title) by \(video.author)")
+    print("\(video.formattedViewCount) views · \(video.formattedDuration)")
+    print(video.url)
 }
 ```
 
-### Timestamped Segments
+### Error handling
 
 ```swift
-let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ")
+import YouTubeTranscript
 
-// Quick dump of entire transcript with timestamps
-print(result.timestampedText)
-
-// Or iterate segments individually
-for segment in result.segments {
-print("[\(segment.formattedStart)] \(segment.text)")
-}
-}
-```
-
-### Specify Language Preferences
-
-Languages are tried in order. Manually created transcripts are preferred over auto-generated.
-
-```swift
-// Prefer German, fall back to English
-let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ", languages: ["de", "en"])
-print("Language: \(result.language)")
-print("Auto-generated: \(result.isGenerated)")
-```
-
-### List Available Transcripts
-
-Check what's available before fetching.
-
-```swift
-let list = try await YouTubeTranscript.list("dQw4w9WgXcQ")
-
-for track in list.tracks {
-print("\(track.language) (\(track.languageCode)) — \(track.typeLabel)")
-}
-
-// Filter by type
-print("Manual: \(list.manualTracks.count)")
-print("Generated: \(list.generatedTracks.count)")
-print("Languages: \(list.availableLanguages)")
-
-// Find best match
-if let track = list.findTrack(languages: ["en", "de"]) {
-print("Best match: \(track.language)")
-}
-```
-
-### Error Handling
-
-```swift
 do {
-let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ")
-print(result.plainText)
+    let result = try await YouTubeTranscript.fetch(videoId)
 } catch YouTubeTranscriptError.transcriptsDisabled {
-print("No transcripts available for this video")
-} catch YouTubeTranscriptError.noTranscriptFound(_, let requested, let available) {
-print("Requested \(requested) but only \(available) available")
+    print("No captions on this video")
 } catch YouTubeTranscriptError.ipBlocked {
-print("Rate limited — try again later")
-} catch YouTubeTranscriptError.videoUnavailable {
-print("Video doesn't exist or was removed")
-} catch YouTubeTranscriptError.videoUnplayable(_, let reason) {
-print("Can't play: \(reason)")
+    print("Rate limited — try again later")
 } catch {
-print("Error: \(error.localizedDescription)")
+    print(error.localizedDescription)
 }
 ```
-
-## Models
-
-### `FetchedTranscript`
-
-The result of fetching a transcript.
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `videoId` | `String` | The YouTube video ID |
-| `segments` | `[TranscriptSegment]` | Timestamped transcript segments |
-| `video` | `VideoMetadata?` | Video metadata (title, author, etc.) |
-| `language` | `String` | Language code of the fetched transcript |
-| `isGenerated` | `Bool` | Whether the transcript is auto-generated |
-| `typeLabel` | `String` | `"manual"` or `"auto"` |
-| `plainText` | `String` | All segment text joined together |
-| `timestampedText` | `String` | Full transcript with `[M:SS]` timestamps |
-| `duration` | `Double` | Total transcript duration in seconds |
-| `formattedDuration` | `String` | Duration as `"M:SS"` or `"H:MM:SS"` |
-| `count` | `Int` | Number of segments |
-
-### `TranscriptSegment`
-
-A single timed segment.
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `text` | `String` | The text content |
-| `start` | `Double` | Start time in seconds |
-| `duration` | `Double` | Display duration in seconds |
-| `end` | `Double` | End time in seconds (`start + duration`) |
-| `language` | `String` | Language code |
-| `formattedStart` | `String` | Start time as `"M:SS"` or `"H:MM:SS"` |
-
-### `VideoMetadata`
-
-Metadata about the video.
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `videoId` | `String` | YouTube video ID |
-| `title` | `String` | Video title |
-| `description` | `String` | Video description |
-| `author` | `String` | Channel/author name |
-| `channelId` | `String` | YouTube channel ID |
-| `lengthSeconds` | `Int` | Duration in seconds |
-| `formattedDuration` | `String` | Duration as `"M:SS"` or `"H:MM:SS"` |
-| `viewCount` | `Int` | Total views |
-| `formattedViewCount` | `String` | Views with grouping separators |
-| `keywords` | `[String]` | Video tags/keywords |
-| `thumbnailUrl` | `String?` | Best thumbnail URL |
-| `url` | `String` | Full YouTube watch URL |
-| `isLive` | `Bool` | Whether it's a livestream |
-
-### `TranscriptTrack`
-
-An available transcript track.
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `languageCode` | `String` | Language code (e.g., "en") |
-| `language` | `String` | Human-readable name (e.g., "English") |
-| `isGenerated` | `Bool` | Whether it's auto-generated |
-| `typeLabel` | `String` | `"manual"` or `"auto"` |
-| `isTranslatable` | `Bool` | Whether translation is available |
-
-### `TranscriptList`
-
-Result of listing available transcripts.
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `videoId` | `String` | The video ID |
-| `tracks` | `[TranscriptTrack]` | All available tracks |
-| `manualTracks` | `[TranscriptTrack]` | Manually created only |
-| `generatedTracks` | `[TranscriptTrack]` | Auto-generated only |
-| `availableLanguages` | `[String]` | All language codes |
 
 ## How It Works
 
-This library uses YouTube's InnerTube API with the ANDROID client:
+1. Fetches the YouTube watch page to establish cookies and extract the InnerTube API key (handling the EU consent page if shown).
+2. Calls the InnerTube player API (`youtubei/v1/player`) with the ANDROID client context.
+3. Extracts caption track URLs and `videoDetails` metadata from the response, then validates the video's playability status.
+4. Fetches and parses the transcript XML for the best matching track.
 
-1. **Fetch the watch page** — establishes cookies and retrieves the `INNERTUBE_API_KEY`
-2. **Call the InnerTube player API** — uses the ANDROID client context, which returns caption URLs that work without browser session tokens
-3. **Fetch the transcript XML** — downloads and parses YouTube's timedtext format
-4. **Extract metadata** — pulls video details from the same API response
+The ANDROID client is used because its caption URLs work without browser session tokens, unlike the WEB client whose URLs require a browser session.
 
-The ANDROID client is critical — the WEB client returns caption URLs that require browser cookies and always return 0 bytes when fetched from native code.
+## Models
 
-## Limitations
+| Type | Kind | Description |
+|------|------|-------------|
+| `FetchedTranscript` | struct | `videoId`, `segments`, `video`, `language`, `isGenerated`, plus `plainText`, `timestampedText`, `duration`, `count`, `typeLabel`, `formattedDuration` |
+| `TranscriptSegment` | struct (Codable) | `text`, `start`, `duration`, `language`, plus `end` and `formattedStart` |
+| `TranscriptList` | struct | `videoId`, `tracks`, plus `manualTracks`, `generatedTracks`, `availableLanguages`, and `findTrack(languages:)` |
+| `TranscriptTrack` | struct (Codable) | `languageCode`, `language`, `isGenerated`, `isTranslatable`, `typeLabel` |
+| `VideoMetadata` | struct (Codable) | `videoId`, `title`, `description`, `author`, `channelId`, `lengthSeconds`, `viewCount`, `keywords`, `thumbnailUrl`, `isLive`, plus `url`, `formattedDuration`, `formattedViewCount` |
+| `YouTubeTranscriptError` | enum | Typed errors with `errorDescription` |
 
-- **Rate limiting** — YouTube may block IPs making too many requests. Reduce frequency or try a different network if you see `ipBlocked` errors.
-- **No authentication** — Age-restricted and private videos require login, which is not supported.
-- **Unofficial API** — YouTube may change their internal API at any time. Updates will be provided as needed.
-- **PO tokens** — Some videos require a Proof of Origin token, indicated by the `poTokenRequired` error.
+## Use Cases
+
+- Generating searchable text from video content
+- Summarising or analysing video transcripts with an LLM
+- Building captions/subtitle tooling
+- Enriching a video library with titles, durations, and view counts
 
 ## Testing
 
@@ -242,21 +156,11 @@ The ANDROID client is critical — the WEB client returns caption URLs that requ
 swift test
 ```
 
-The test suite includes unit tests for parsing, video ID extraction, and error handling, plus integration tests that hit YouTube's live API.
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
+The test suite exercises video-ID extraction, transcript fetching and parsing, track listing, metadata extraction, and error handling.
 
 ## Credits
 
-This library is inspired by and based on the approach used in [youtube-transcript-api](https://github.com/jdepoix/youtube-transcript-api) by [@jdepoix](https://github.com/jdepoix), the excellent Python library for YouTube transcript retrieval. The InnerTube API approach, consent cookie handling, and playability status checking are adapted from their work.
+Inspired by [youtube-transcript-api](https://github.com/jdepoix/youtube-transcript-api) by [@jdepoix](https://github.com/jdepoix).
 
 ## License
 
@@ -264,4 +168,4 @@ MIT License — see LICENSE file for details.
 
 ## Author
 
-Created by David Sherlock ([ArrayPress](https://github.com/arraypress)) in 2025.
+Created by David Sherlock ([ArrayPress](https://github.com/arraypress)) in 2026.
