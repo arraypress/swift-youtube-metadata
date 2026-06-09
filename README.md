@@ -28,7 +28,7 @@ Add the following to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/arraypress/swift-youtube-transcript.git", from: "1.0.0")
+.package(url: "https://github.com/arraypress/swift-youtube-transcript.git", from: "1.0.0")
 ]
 ```
 
@@ -61,14 +61,14 @@ Metadata is extracted from the same API call — no additional requests.
 let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ")
 
 if let video = result.video {
-    print("Title: \(video.title)")
-    print("Author: \(video.author)")
-    print("Views: \(video.formattedViewCount)")
-    print("Duration: \(video.formattedDuration)")
-    print("Keywords: \(video.keywords.joined(separator: ", "))")
-    print("Description: \(video.description)")
-    print("Thumbnail: \(video.thumbnailUrl ?? "")")
-    print("URL: \(video.url)")
+print("Title: \(video.title)")
+print("Author: \(video.author)")
+print("Views: \(video.formattedViewCount)")
+print("Duration: \(video.formattedDuration)")
+print("Keywords: \(video.keywords.joined(separator: ", "))")
+print("Description: \(video.description)")
+print("Thumbnail: \(video.thumbnailUrl ?? "")")
+print("URL: \(video.url)")
 }
 ```
 
@@ -82,7 +82,7 @@ print(result.timestampedText)
 
 // Or iterate segments individually
 for segment in result.segments {
-    print("[\(segment.formattedStart)] \(segment.text)")
+print("[\(segment.formattedStart)] \(segment.text)")
 }
 }
 ```
@@ -106,7 +106,7 @@ Check what's available before fetching.
 let list = try await YouTubeTranscript.list("dQw4w9WgXcQ")
 
 for track in list.tracks {
-    print("\(track.language) (\(track.languageCode)) — \(track.typeLabel)")
+print("\(track.language) (\(track.languageCode)) — \(track.typeLabel)")
 }
 
 // Filter by type
@@ -116,7 +116,7 @@ print("Languages: \(list.availableLanguages)")
 
 // Find best match
 if let track = list.findTrack(languages: ["en", "de"]) {
-    print("Best match: \(track.language)")
+print("Best match: \(track.language)")
 }
 ```
 
@@ -124,20 +124,20 @@ if let track = list.findTrack(languages: ["en", "de"]) {
 
 ```swift
 do {
-    let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ")
-    print(result.plainText)
+let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ")
+print(result.plainText)
 } catch YouTubeTranscriptError.transcriptsDisabled {
-    print("No transcripts available for this video")
+print("No transcripts available for this video")
 } catch YouTubeTranscriptError.noTranscriptFound(_, let requested, let available) {
-    print("Requested \(requested) but only \(available) available")
+print("Requested \(requested) but only \(available) available")
 } catch YouTubeTranscriptError.ipBlocked {
-    print("Rate limited — try again later")
+print("Rate limited — try again later")
 } catch YouTubeTranscriptError.videoUnavailable {
-    print("Video doesn't exist or was removed")
+print("Video doesn't exist or was removed")
 } catch YouTubeTranscriptError.videoUnplayable(_, let reason) {
-    print("Can't play: \(reason)")
+print("Can't play: \(reason)")
 } catch {
-    print("Error: \(error.localizedDescription)")
+print("Error: \(error.localizedDescription)")
 }
 ```
 
