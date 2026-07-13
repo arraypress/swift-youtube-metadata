@@ -257,6 +257,37 @@ final class YouTubeTranscriptTests: XCTestCase {
         }
     }
 
+    // MARK: - Transcript Parsing
+
+    func testParseStandardSegments() {
+        let xml = "<transcript><text start=\"0.0\" dur=\"2.5\">Hello</text><text start=\"2.5\" dur=\"3.0\">World &amp; more</text></transcript>"
+        let segments = TranscriptParser.parse(xml, language: "en")
+        XCTAssertEqual(segments.count, 2)
+        XCTAssertEqual(segments[0].text, "Hello")
+        XCTAssertEqual(segments[0].start, 0.0)
+        XCTAssertEqual(segments[0].duration, 2.5)
+        XCTAssertEqual(segments[1].text, "World & more")
+    }
+
+    /// A `<text>` element with no `dur` must NOT be dropped (previously it was).
+    func testParseSegmentMissingDuration() {
+        let xml = "<text start=\"5.0\">Final line</text>"
+        let segments = TranscriptParser.parse(xml, language: "en")
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(segments[0].text, "Final line")
+        XCTAssertEqual(segments[0].start, 5.0)
+        XCTAssertEqual(segments[0].duration, 0)
+    }
+
+    /// Attribute order must not matter (previously `dur` had to follow `start`).
+    func testParseSegmentReorderedAttributes() {
+        let xml = "<text dur=\"1.5\" start=\"9.0\">Reordered</text>"
+        let segments = TranscriptParser.parse(xml, language: "en")
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(segments[0].start, 9.0)
+        XCTAssertEqual(segments[0].duration, 1.5)
+    }
+
     func testErrorEquatable() {
         XCTAssertEqual(YouTubeTranscriptError.ipBlocked, .ipBlocked)
         XCTAssertEqual(YouTubeTranscriptError.invalidVideoId, .invalidVideoId)

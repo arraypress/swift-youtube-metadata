@@ -1,6 +1,9 @@
 # Swift YouTube Metadata
 
-A dependency-free Swift library for fetching YouTube video transcripts and metadata. It uses YouTube's InnerTube API with the ANDROID client to reliably retrieve captions and video details with no API key, browser, or authentication — returning transcript segments and rich video metadata from a single call.
+A dependency-free Swift package for fetching YouTube data via YouTube's internal InnerTube API — no API key, browser, or authentication. It provides two independent libraries:
+
+- **`YouTubeTranscript`** — video transcripts and rich metadata from a single call.
+- **`YouTubeComments`** — public comment downloads (with replies, hearts, pins, membership badges, and paid chips), exportable to CSV/TSV/JSON. See [Downloading comments](#downloading-comments-youtubecomments).
 
 ## Features
 
@@ -143,12 +146,66 @@ The ANDROID client is used because its caption URLs work without browser session
 | `VideoMetadata` | struct (Codable) | `videoId`, `title`, `description`, `author`, `channelId`, `lengthSeconds`, `viewCount`, `keywords`, `thumbnailUrl`, `isLive`, plus `url`, `formattedDuration`, `formattedViewCount` |
 | `YouTubeTranscriptError` | enum | Typed errors with `errorDescription` |
 
+## Downloading comments (`YouTubeComments`)
+
+This package ships a second, independent library — `YouTubeComments` — for downloading a video's public comments. It's a self-contained target (it shares no code with `YouTubeTranscript`) and uses the InnerTube `youtubei/v1/next` endpoint with continuation-token pagination, again with **no API key, quota, or authentication**.
+
+It captures fields the official YouTube Data API does **not** expose: creator hearts, pinned status, membership badges, and paid "Super Thanks" chips.
+
+```swift
+import YouTubeComments
+
+// Fetch everything (top-level comments + replies), thread order preserved:
+let comments = try await YouTubeComments.fetch("dQw4w9WgXcQ")
+
+// First 200 newest, no replies:
+let recent = try await YouTubeComments.fetch(
+    "https://youtu.be/dQw4w9WgXcQ",
+    sortBy: .newest,
+    includeReplies: false,
+    limit: 200
+)
+
+// Stream page-by-page for very large threads:
+for try await comment in YouTubeComments.stream("dQw4w9WgXcQ") {
+    if comment.isHearted { print("❤️ \(comment.author): \(comment.text)") }
+}
+```
+
+### Exporting
+
+```swift
+let tsv  = comments.tsv()            // publishedTimeText, simpleText, votes, author,
+                                     // isReply, isHearted, isPinned, isPaid, paidAmount,
+                                     // isSponsor, sponsorshipMonths
+let csv  = comments.csv()            // RFC-4180 quoted
+let json = try comments.jsonData()   // Codable Comment array
+```
+
+### Comment model
+
+| Field | Description |
+|-------|-------------|
+| `id`, `text`, `author`, `authorChannelId`, `authorAvatarUrl` | Identity + content |
+| `publishedTimeText`, `isEdited` | e.g. `"1 month ago (edited)"` |
+| `likeCountText`, `likeCount` | As displayed (`"85K"`) + best-effort Int |
+| `replyCount`, `isReply`, `parentId` | Threading |
+| `isHearted`, `isPinned`, `pinnedByText` | Creator signals |
+| `isVerified`, `isChannelOwner` | Author flags |
+| `isPaid`, `paidAmount` | Super Thanks |
+| `isSponsor`, `sponsorshipMonths`, `sponsorBadgeText` | Membership |
+
+Networking, retries/backoff, timeouts, and a politeness delay are configurable via `YouTubeComments.Configuration`.
+
+> **Note:** These are undocumented endpoints and this is against YouTube's Terms of Service. Fetch responsibly; expect `YouTubeCommentsError.ipBlocked` if you go too fast.
+
 ## Use Cases
 
 - Generating searchable text from video content
 - Summarising or analysing video transcripts with an LLM
 - Building captions/subtitle tooling
 - Enriching a video library with titles, durations, and view counts
+- Exporting comment datasets for sentiment analysis, social listening, or research
 
 ## Testing
 

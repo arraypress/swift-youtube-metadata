@@ -16,6 +16,10 @@ let package = Package(
             name: "YouTubeTranscript",
             targets: ["YouTubeTranscript"]
         ),
+        .library(
+            name: "YouTubeComments",
+            targets: ["YouTubeComments"]
+        ),
     ],
     targets: [
         .target(
@@ -25,6 +29,16 @@ let package = Package(
         .testTarget(
             name: "YouTubeTranscriptTests",
             dependencies: ["YouTubeTranscript"]
+        ),
+        // Self-contained sibling target. Shares no code with YouTubeTranscript
+        // by design — the two modules are independent parts of one package.
+        .target(
+            name: "YouTubeComments",
+            dependencies: []
+        ),
+        .testTarget(
+            name: "YouTubeCommentsTests",
+            dependencies: ["YouTubeComments"]
         ),
     ]
 )

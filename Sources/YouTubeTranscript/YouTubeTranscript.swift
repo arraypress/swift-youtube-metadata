@@ -63,6 +63,9 @@ public enum YouTubeTranscript {
         config.httpCookieAcceptPolicy = .always
         config.httpShouldSetCookies = true
         config.httpCookieStorage = HTTPCookieStorage.shared
+        // Explicit timeouts so a hung connection can't block the await forever.
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
         return URLSession(configuration: config)
     }()
 
@@ -192,7 +195,7 @@ public enum YouTubeTranscript {
         request.setValue("en-US", forHTTPHeaderField: "Accept-Language")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await perform(request)
 
         if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 429 {
             throw YouTubeTranscriptError.ipBlocked
@@ -203,6 +206,19 @@ public enum YouTubeTranscript {
         }
 
         return html
+    }
+
+    /// Performs a request, converting transport failures (timeouts, DNS, offline)
+    /// into a typed ``YouTubeTranscriptError/networkError(_:)`` instead of letting
+    /// a raw `URLError` escape the library's typed-error contract.
+    private static func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            return try await session.data(for: request)
+        } catch let error as YouTubeTranscriptError {
+            throw error
+        } catch {
+            throw YouTubeTranscriptError.networkError(String(describing: error))
+        }
     }
 
     // MARK: - Consent Handling
@@ -269,7 +285,7 @@ public enum YouTubeTranscript {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await perform(request)
 
         if (response as? HTTPURLResponse)?.statusCode == 429 {
             throw YouTubeTranscriptError.ipBlocked
@@ -369,7 +385,18 @@ public enum YouTubeTranscript {
         var request = URLRequest(url: url)
         request.setValue("en-US", forHTTPHeaderField: "Accept-Language")
 
-        let (data, _) = try await session.data(for: request)
+        let (data, response) = try await perform(request)
+
+        // The timedtext endpoint is rate-limited too; without this check a 429
+        // here would surface as a misleading `emptyTranscript`.
+        if let httpResponse = response as? HTTPURLResponse {
+            if httpResponse.statusCode == 429 {
+                throw YouTubeTranscriptError.ipBlocked
+            }
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                throw YouTubeTranscriptError.networkError("HTTP \(httpResponse.statusCode) fetching transcript")
+            }
+        }
 
         guard let xmlString = String(data: data, encoding: .utf8), !xmlString.isEmpty else {
             throw YouTubeTranscriptError.emptyTranscript(videoId: videoId)
