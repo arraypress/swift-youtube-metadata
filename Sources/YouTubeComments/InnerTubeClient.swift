@@ -60,7 +60,12 @@ struct InnerTubeClient {
     func bootstrap(videoId: String) async throws(YouTubeCommentsError) -> Bootstrap {
         let html = try await fetchWatchPage(videoId: videoId)
 
-        let apiKey = extractApiKey(from: html) ?? Self.fallbackApiKey
+        // The InnerTube key is the public web key present in every watch page's
+        // `INNERTUBE_API_KEY`; it is read live rather than hardcoded.
+        guard let apiKey = extractApiKey(from: html) else {
+            if html.contains("g-recaptcha") { throw .requestBlocked }
+            throw .parsingError("Could not extract the InnerTube API key from the watch page (\(videoId)).")
+        }
         let version = extractClientVersion(from: html) ?? Self.fallbackClientVersion
 
         // Parse ytInitialData for the comment section's continuation token.
@@ -262,10 +267,6 @@ struct InnerTubeClient {
 
     /// Browser-like user agent used for every request.
     static let userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-    /// YouTube's public WEB InnerTube key. Stable for years; used only as a
-    /// fallback if the watch-page scrape misses.
-    static let fallbackApiKey = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
 
     /// Fallback WEB client version if the watch page doesn't expose one.
     static let fallbackClientVersion = "2.20240101.00.00"
