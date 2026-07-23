@@ -93,6 +93,27 @@ let vtt = result.vtt()   // WebVTT
 try srt.write(to: url, atomically: true, encoding: .utf8)
 ```
 
+### Speaker turns
+
+Interview and podcast captions often include `>>` speaker-change markers.
+`result.turns` groups the segments into ``TranscriptTurn``s at those markers —
+useful for reading a two-party conversation or feeding an LLM per-turn instead
+of one blob.
+
+```swift
+let result = try await YouTubeTranscript.fetch(videoId)
+
+for turn in result.turns {
+    print("[\(turn.formattedStart)] Speaker \(turn.speaker + 1): \(turn.text)")
+}
+```
+
+> **Note:** YouTube captions carry no speaker *names*, only change markers, and
+> auto-generated tracks mark changes imperfectly. So `turn.speaker` is a
+> best-effort alternating index (0, 1, 0, …) — reliable as a *turn* boundary,
+> approximate as *speaker identity*. True diarization needs the audio and an ML
+> model.
+
 ### Listing available transcripts
 
 ```swift
