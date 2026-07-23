@@ -1,13 +1,14 @@
 # Swift YouTube Metadata
 
-A dependency-free Swift package for fetching YouTube data via YouTube's internal InnerTube API — no API key, browser, or authentication. It provides two independent libraries:
+A dependency-free Swift package for fetching YouTube data via YouTube's internal InnerTube API — no API key, browser, or authentication. It provides three independent libraries:
 
-- **`YouTubeTranscript`** — video transcripts and rich metadata from a single call.
+- **`YouTubeTranscript`** — video transcripts and rich metadata from a single call, with SRT/VTT export.
 - **`YouTubeComments`** — public comment downloads (with replies, hearts, pins, membership badges, and paid chips), exportable to CSV/TSV/JSON. See [Downloading comments](#downloading-comments-youtubecomments).
+- **`YouTubeChannel`** — enumerate an entire channel's uploads, Shorts, and live streams, with channel info and exact per-video stats. See [Enumerating a channel](#enumerating-a-channel-youtubechannel).
 
 ## Features
 
-- 📝 **Transcript fetching** — `fetch(_:)` returns a `FetchedTranscript` with timed segments, plain text, and timestamped text
+- 📝 **Transcript fetching** — `fetch(_:)` returns a `FetchedTranscript` with timed segments, plain text, timestamped text, and `srt()` / `vtt()` subtitle export
 - 🎬 **Video metadata included** — the same call also returns `VideoMetadata` (title, author, description, view count, duration, keywords, thumbnail) at no extra request
 - 🌐 **Language preferences** — pass an ordered list of language codes; manual transcripts are preferred over auto-generated, with prefix matching (`"en"` matches `"en-US"`)
 - 📋 **Track discovery** — `list(_:)` returns a `TranscriptList` of available tracks without downloading any transcript content
@@ -78,6 +79,18 @@ for segment in result.segments {
 
 // Or all at once
 print(result.timestampedText)
+```
+
+### Exporting subtitles (SRT / VTT)
+
+```swift
+import YouTubeTranscript
+
+let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ")
+
+let srt = result.srt()   // SubRip, with overlapping auto-caption cues clamped
+let vtt = result.vtt()   // WebVTT
+try srt.write(to: url, atomically: true, encoding: .utf8)
 ```
 
 ### Listing available transcripts
@@ -199,9 +212,57 @@ Networking, retries/backoff, timeouts, and a politeness delay are configurable v
 
 > **Note:** These are undocumented endpoints and this is against YouTube's Terms of Service. Fetch responsibly; expect `YouTubeCommentsError.ipBlocked` if you go too fast.
 
+## Enumerating a channel (`YouTubeChannel`)
+
+The third independent library — `YouTubeChannel` — walks a channel's tabs to return **every** upload (not just the ~15 the public RSS feed exposes), using the InnerTube `browse` endpoint with continuation-token pagination. Like the others, it's self-contained and needs **no API key, quota, or authentication**.
+
+```swift
+import YouTubeChannel
+
+// Every video ID on a channel (accepts channel IDs, @handles, and URLs)
+let ids = try await YouTubeChannel.videoIDs("@GoogleDevelopers")
+
+// Items with grid metadata (title, length, views, published, thumbnail, isLive)
+let videos = try await YouTubeChannel.videos("@GoogleDevelopers", limit: 200)
+
+// Other tabs
+let shorts  = try await YouTubeChannel.videos("@MrBeast", tab: .shorts)
+let streams = try await YouTubeChannel.videos("@LofiGirl", tab: .streams)
+
+// Channel-level info (subscribers, description, avatar) — one page load
+let info = try await YouTubeChannel.info("@MrBeast")
+
+// Stream page-by-page for very large channels
+for try await video in YouTubeChannel.stream("@GoogleDevelopers") {
+    print(video.id, video.title)
+}
+```
+
+### Exact per-video stats
+
+The grid only carries rounded text (`"4.7K views"`). For precise numbers — exact view count, length in seconds, publish date, description, category, keywords — fetch details (one request per video, reusing credentials and capping concurrency):
+
+```swift
+let ids = try await YouTubeChannel.videoIDs("@GoogleDevelopers")
+for try await details in YouTubeChannel.detailsStream(for: ids) {
+    print(details.id, details.viewCount ?? -1, details.publishDate ?? "")
+}
+```
+
+Networking, retries/backoff, politeness delay, and concurrency are configurable via `YouTubeChannel.Configuration`.
+
+### Example CLI
+
+The package includes a `YouTubeDump` executable that composes all three libraries into a one-command channel dump:
+
+```bash
+swift run YouTubeDump @GoogleDevelopers --limit 20 --details --transcripts --format srt --comments
+```
+
 ## Use Cases
 
 - Generating searchable text from video content
+- Archiving an entire channel's videos, transcripts, and comments
 - Summarising or analysing video transcripts with an LLM
 - Building captions/subtitle tooling
 - Enriching a video library with titles, durations, and view counts

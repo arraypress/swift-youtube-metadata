@@ -20,6 +20,10 @@ let package = Package(
             name: "YouTubeComments",
             targets: ["YouTubeComments"]
         ),
+        .library(
+            name: "YouTubeChannel",
+            targets: ["YouTubeChannel"]
+        ),
     ],
     targets: [
         .target(
@@ -39,6 +43,23 @@ let package = Package(
         .testTarget(
             name: "YouTubeCommentsTests",
             dependencies: ["YouTubeComments"]
+        ),
+        // Self-contained sibling target. Shares no code with the other modules
+        // by design — enumerates a channel's uploads via the InnerTube browse API.
+        .target(
+            name: "YouTubeChannel",
+            dependencies: []
+        ),
+        .testTarget(
+            name: "YouTubeChannelTests",
+            dependencies: ["YouTubeChannel"]
+        ),
+        // Example CLI that composes the three self-contained libraries into a
+        // full channel → transcripts/comments dump. The libraries still share
+        // no code; only this executable depends on all three.
+        .executableTarget(
+            name: "YouTubeDump",
+            dependencies: ["YouTubeChannel", "YouTubeTranscript", "YouTubeComments"]
         ),
     ]
 )
