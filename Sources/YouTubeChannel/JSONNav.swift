@@ -40,6 +40,51 @@ enum JSONNav {
         first(key, in: obj) as? String
     }
 
+    /// Returns every dictionary stored under `key` anywhere in the tree, in
+    /// depth-first pre-order.
+    ///
+    /// Used for surfaces whose items are not wrapped in a predictable grid
+    /// array — the playlists tab and the community feed both bury their
+    /// renderers at varying depths.
+    static func all(_ key: String, in obj: Any?) -> [[String: Any]] {
+        var results: [[String: Any]] = []
+        collect(key, in: obj, into: &results)
+        return results
+    }
+
+    private static func collect(_ key: String, in obj: Any?, into results: inout [[String: Any]]) {
+        if let dict = obj as? [String: Any] {
+            if let hit = dict[key] as? [String: Any] { results.append(hit) }
+            for value in dict.values { collect(key, in: value, into: &results) }
+        } else if let array = obj as? [Any] {
+            for value in array { collect(key, in: value, into: &results) }
+        }
+    }
+
+    /// Flattens YouTube's `{ "runs": [...] }` / `{ "simpleText": … }` text
+    /// containers into a plain string.
+    ///
+    /// Both shapes appear for the same field depending on surface and client
+    /// version, so every text read goes through here.
+    static func text(_ obj: Any?) -> String? {
+        guard let dict = obj as? [String: Any] else { return nil }
+        if let simple = dict["simpleText"] as? String, !simple.isEmpty { return simple }
+        if let runs = dict["runs"] as? [[String: Any]] {
+            let joined = runs.compactMap { $0["text"] as? String }.joined()
+            return joined.isEmpty ? nil : joined
+        }
+        if let content = dict["content"] as? String, !content.isEmpty { return content }
+        return nil
+    }
+
+    /// The first continuation token in the tree, if the surface offers one.
+    static func continuationToken(in obj: Any?) -> String? {
+        for renderer in all("continuationItemRenderer", in: obj) {
+            if let token = string("token", in: renderer) { return token }
+        }
+        return nil
+    }
+
     /// Returns every array in the tree (depth-first, pre-order) that contains
     /// at least one element satisfying `elementContains`.
     ///

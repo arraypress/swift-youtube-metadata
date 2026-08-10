@@ -1,10 +1,13 @@
 # Swift YouTube Metadata
 
-A dependency-free Swift package for fetching YouTube data via YouTube's internal InnerTube API — no API key, browser, or authentication. It provides three independent libraries:
+A dependency-free Swift package for fetching YouTube data via YouTube's internal InnerTube API — no API key, browser, or authentication. It provides four independent libraries:
 
 - **`YouTubeTranscript`** — video transcripts and rich metadata from a single call, with SRT/VTT export.
-- **`YouTubeComments`** — public comment downloads (with replies, hearts, pins, membership badges, and paid chips), exportable to CSV/TSV/JSON. See [Downloading comments](#downloading-comments-youtubecomments).
-- **`YouTubeChannel`** — enumerate an entire channel's uploads, Shorts, and live streams, with channel info and exact per-video stats. See [Enumerating a channel](#enumerating-a-channel-youtubechannel).
+- **`YouTubeComments`** — public comment downloads (with replies, hearts, pins, membership badges, and paid chips) from **videos and community posts**, exportable to CSV/TSV/JSON. See [Downloading comments](#downloading-comments-youtubecomments).
+- **`YouTubeChannel`** — enumerate a channel's uploads, Shorts, live streams, **playlists and community posts**, plus channel info, **playlist contents**, and exact per-video stats. See [Enumerating a channel](#enumerating-a-channel-youtubechannel).
+- **`YouTubeSearch`** — search YouTube site-wide or within one channel, with sort, upload-window and duration filters.
+
+Each target is self-contained and shares no code with the others, so you can depend on only what you need.
 
 ## Features
 
@@ -20,6 +23,62 @@ A dependency-free Swift package for fetching YouTube data via YouTube's internal
 - 📦 **Sendable & Codable models** — transcript and metadata types are `Sendable`, and the segment, track, and metadata models are `Codable`
 
 > **Note:** The module is named `YouTubeTranscript` — import it with `import YouTubeTranscript`.
+
+## Searching (`YouTubeSearch`)
+
+```swift
+import YouTubeSearch
+
+// Site-wide
+let hits = try await YouTubeSearch.videos("swift concurrency", limit: 20)
+
+// Ordered and filtered — combinations work, because the `sp` parameter is
+// encoded as a protobuf rather than copied from a table of magic strings
+let recent = try await YouTubeSearch.videos(
+    "wwdc",
+    filters: SearchFilters(sortBy: .viewCount, uploadDate: .thisWeek, duration: .long),
+    limit: 10
+)
+
+// Within one channel — YouTube matches server-side, so this costs one page
+// instead of enumerating the channel and filtering locally
+let matches = try await YouTubeSearch.channel("@iJustine", query: "iphone", limit: 10)
+```
+
+| Filter | Values |
+|---|---|
+| `sortBy` | `.relevance` `.rating` `.uploadDate` `.viewCount` |
+| `uploadDate` | `.lastHour` `.today` `.thisWeek` `.thisMonth` `.thisYear` |
+| `duration` | `.short` `.medium` `.long` |
+| `type` | `.video` — see the warning on `ResultType`; only videos are parsed today |
+
+## Playlists and posts (`YouTubeChannel`)
+
+```swift
+// A channel's playlists
+let playlists = try await YouTubeChannel.playlists("@iJustine", limit: 20)
+
+// One playlist's videos — accepts PL…, UU… (uploads), RD… (mix), or a list= URL
+let videos = try await YouTubeChannel.playlist(playlists[0].id)
+
+// Community posts, with typed attachments
+let posts = try await YouTubeChannel.posts("@iJustine", limit: 10)
+for post in posts {
+    switch post.attachment.kind {
+    case .gallery: print("\(post.attachment.imageUrls.count) images")
+    case .poll:    print(post.attachment.pollOptions)
+    default:       break
+    }
+}
+
+// A post's comment thread, threaded exactly like a video's
+let replies = try await YouTubeComments.post(posts[0].id, limit: 100)
+```
+
+> Community post comments page through `youtubei/v1/browse` rather than `next`.
+> The library handles that; it is noted here because sending a post's token to
+> the wrong endpoint returns a well-formed response containing no comments at
+> all, rather than an error.
 
 ## Requirements
 

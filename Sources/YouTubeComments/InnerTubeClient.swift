@@ -86,12 +86,28 @@ struct InnerTubeClient {
         return Bootstrap(apiKey: apiKey, clientVersion: version, continuationToken: token)
     }
 
-    // MARK: - next endpoint
+    // MARK: - Continuations
 
-    /// Calls `youtubei/v1/next` with a continuation token and returns the
-    /// parsed JSON object.
-    func next(token: String, apiKey: String, clientVersion: String) async throws(YouTubeCommentsError) -> [String: Any] {
-        guard let url = URL(string: "https://www.youtube.com/youtubei/v1/next?key=\(apiKey)&prettyPrint=false") else {
+    /// Which InnerTube endpoint services a continuation.
+    ///
+    /// Video comments page through `next`; a community post's comments page
+    /// through `browse` — the post page's own continuation metadata says so
+    /// (`"apiUrl": "/youtubei/v1/browse"`). Sending a token to the wrong one
+    /// returns a well-formed response with no comments in it rather than an
+    /// error, which is exactly the kind of silent empty result that looks like
+    /// "this post has no comments".
+    enum Endpoint: String {
+        case next
+        case browse
+    }
+
+    func next(
+        token: String,
+        apiKey: String,
+        clientVersion: String,
+        endpoint: Endpoint = .next
+    ) async throws(YouTubeCommentsError) -> [String: Any] {
+        guard let url = URL(string: "https://www.youtube.com/youtubei/v1/\(endpoint.rawValue)?key=\(apiKey)&prettyPrint=false") else {
             throw .parsingError("Invalid InnerTube URL")
         }
 
@@ -128,6 +144,75 @@ struct InnerTubeClient {
     }
 
     // MARK: - Watch page
+
+    /// Bootstraps from a community post page rather than a watch page.
+    ///
+    /// The threading logic downstream is identical, but the transport is not: a
+    /// post's continuation metadata declares `"apiUrl": "/youtubei/v1/browse"`,
+    /// so its tokens must go to ``Endpoint/browse`` rather than the `next`
+    /// endpoint watch pages use.
+    func bootstrap(postId: String) async throws(YouTubeCommentsError) -> Bootstrap {
+        let html = try await fetchPostPage(postId: postId)
+
+        guard let apiKey = extractApiKey(from: html) else {
+            if html.contains("g-recaptcha") { throw .requestBlocked }
+            throw .parsingError("Could not extract the InnerTube API key from the post page (\(postId)).")
+        }
+        let version = extractClientVersion(from: html) ?? Self.fallbackClientVersion
+
+        guard let initialData = extractInitialData(from: html) else {
+            if html.contains("g-recaptcha") { throw .requestBlocked }
+            throw .parsingError("Could not locate ytInitialData in post page (\(postId)).")
+        }
+
+        // A post page contains the post itself before its comment section, so
+        // the first continuation token in the tree can belong to the post feed
+        // rather than the comments. Prefer a token found under an
+        // itemSectionRenderer that is not the post, then fall back to any.
+        let sections = JSONNav.all("itemSectionRenderer", in: initialData)
+        let token = sections
+            .compactMap { section -> String? in
+                guard JSONNav.first("backstagePostRenderer", in: section) == nil else { return nil }
+                return JSONNav.string("token", in: JSONNav.first("continuationItemRenderer", in: section))
+            }
+            .first
+            ?? JSONNav.string("token", in: JSONNav.first("continuationItemRenderer", in: initialData))
+
+        guard let token else {
+            throw .commentsDisabled(videoId: postId)
+        }
+
+        return Bootstrap(apiKey: apiKey, clientVersion: version, continuationToken: token)
+    }
+
+    private func fetchPostPage(postId: String) async throws(YouTubeCommentsError) -> String {
+        let html = try await rawPostPage(postId: postId)
+
+        if html.contains("consent.youtube.com") {
+            try setConsentCookie(from: html, videoId: postId)
+            let retry = try await rawPostPage(postId: postId)
+            if retry.contains("consent.youtube.com") {
+                throw .consentFailed(videoId: postId)
+            }
+            return retry
+        }
+        return html
+    }
+
+    private func rawPostPage(postId: String) async throws(YouTubeCommentsError) -> String {
+        guard let url = URL(string: "https://www.youtube.com/post/\(postId)?hl=en") else {
+            throw .invalidVideoId
+        }
+        var request = URLRequest(url: url)
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+
+        let data = try await performWithRetry(request)
+        guard let html = String(data: data, encoding: .utf8) else {
+            throw .parsingError("Failed to decode post page HTML")
+        }
+        return html
+    }
 
     private func fetchWatchPage(videoId: String) async throws(YouTubeCommentsError) -> String {
         let html = try await rawWatchPage(videoId: videoId)

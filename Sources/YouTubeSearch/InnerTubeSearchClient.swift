@@ -1,0 +1,268 @@
+//
+//  InnerTubeSearchClient.swift
+//  YouTubeSearch
+//
+//  Created by David Sherlock on 2026.
+//
+//  Bootstraps off a results page for the InnerTube credentials and the first
+//  page of hits, then pages through the rest with continuation tokens.
+//
+//  This is deliberately self-contained: the `YouTubeSearch` target shares no
+//  code with the other modules in the package.
+//
+
+import Foundation
+
+struct InnerTubeSearchClient {
+
+    let config: YouTubeSearch.Configuration
+    private let session: URLSession
+    private let cookieStorage: HTTPCookieStorage
+
+    init(config: YouTubeSearch.Configuration) {
+        self.config = config
+        if let provided = config.session {
+            self.session = provided
+            self.cookieStorage = provided.configuration.httpCookieStorage ?? .shared
+        } else {
+            // Own cookie storage so the package modules don't share global
+            // consent/session state.
+            let storage = HTTPCookieStorage()
+            let sessionConfig = URLSessionConfiguration.default
+            sessionConfig.httpCookieAcceptPolicy = .always
+            sessionConfig.httpShouldSetCookies = true
+            sessionConfig.httpCookieStorage = storage
+            sessionConfig.timeoutIntervalForRequest = config.requestTimeout
+            sessionConfig.timeoutIntervalForResource = config.resourceTimeout
+            self.session = URLSession(configuration: sessionConfig)
+            self.cookieStorage = storage
+        }
+    }
+
+    // MARK: - Endpoints
+
+    /// Which InnerTube endpoint services a continuation.
+    ///
+    /// Site-wide search pages through `/search`; a channel's search tab is a
+    /// browse surface and pages through `/browse`. Sending a token to the wrong
+    /// one returns an empty page rather than an error, which is why the caller
+    /// tracks it explicitly.
+    enum Endpoint: String {
+        case search
+        case browse
+    }
+
+    // MARK: - Bootstrap
+
+    /// Credentials plus the first page, from a single page fetch.
+    struct Bootstrap {
+        let apiKey: String
+        let clientVersion: String
+        let firstPage: SearchParser.Page
+    }
+
+    /// Fetches a results page and extracts the InnerTube credentials, the first
+    /// batch of results, and the continuation token.
+    func bootstrap(url: URL, subject: String) async throws(YouTubeSearchError) -> Bootstrap {
+        let html = try await fetchPage(url: url, subject: subject)
+
+        guard let apiKey = firstMatch(#""INNERTUBE_API_KEY":\s*"([a-zA-Z0-9_-]+)""#, in: html) else {
+            if html.contains("g-recaptcha") { throw .requestBlocked }
+            throw .parsingError("Could not extract the InnerTube API key from the results page.")
+        }
+        let version = firstMatch(#""INNERTUBE_CONTEXT_CLIENT_VERSION":\s*"([\d.]+)""#, in: html)
+            ?? firstMatch(#""clientVersion":\s*"([\d.]+)""#, in: html)
+            ?? Self.fallbackClientVersion
+
+        guard let initialData = extractInitialData(from: html) else {
+            if html.contains("g-recaptcha") { throw .requestBlocked }
+            throw .parsingError("Could not locate ytInitialData in the results page.")
+        }
+
+        return Bootstrap(
+            apiKey: apiKey,
+            clientVersion: version,
+            firstPage: SearchParser.parse(initialData)
+        )
+    }
+
+    // MARK: - Continuations
+
+    /// Fetches one more page of results.
+    func page(
+        token: String,
+        endpoint: Endpoint,
+        apiKey: String,
+        clientVersion: String
+    ) async throws(YouTubeSearchError) -> SearchParser.Page {
+        guard let url = URL(
+            string: "https://www.youtube.com/youtubei/v1/\(endpoint.rawValue)?key=\(apiKey)&prettyPrint=false"
+        ) else {
+            throw .parsingError("Invalid InnerTube URL")
+        }
+
+        let body: [String: Any] = [
+            "context": [
+                "client": [
+                    "hl": config.language,
+                    "gl": config.region,
+                    "clientName": "WEB",
+                    "clientVersion": clientVersion
+                ]
+            ],
+            "continuation": token
+        ]
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            throw .parsingError("Failed to encode continuation request body")
+        }
+
+        let data = try await performWithRetry(request)
+
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            throw .parsingError("Invalid InnerTube JSON response")
+        }
+        return SearchParser.parse(json)
+    }
+
+    // MARK: - Page fetching
+
+    private func fetchPage(url: URL, subject: String) async throws(YouTubeSearchError) -> String {
+        let html = try await rawPage(url: url)
+
+        // Handle YouTube's EU consent interstitial.
+        if html.contains("consent.youtube.com") {
+            try setConsentCookie(from: html)
+            let retry = try await rawPage(url: url)
+            if retry.contains("consent.youtube.com") {
+                throw .requestBlocked
+            }
+            return retry
+        }
+        return html
+    }
+
+    private func rawPage(url: URL) async throws(YouTubeSearchError) -> String {
+        var request = URLRequest(url: url)
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+
+        let data = try await performWithRetry(request)
+        guard let html = String(data: data, encoding: .utf8) else {
+            throw .parsingError("Failed to decode results page HTML")
+        }
+        return html
+    }
+
+    private func setConsentCookie(from html: String) throws(YouTubeSearchError) {
+        let value = firstMatch(#"name="v" value="(.*?)""#, in: html)
+        let cookie = HTTPCookie(properties: [
+            .domain: ".youtube.com",
+            .path: "/",
+            .name: "CONSENT",
+            .value: "YES+" + (value ?? "cb.20210328-17-p0.en+FX"),
+            .secure: "TRUE"
+        ])
+        if let cookie { cookieStorage.setCookie(cookie) }
+    }
+
+    /// Extracts and parses the `ytInitialData` JSON object from a page.
+    private func extractInitialData(from html: String) -> [String: Any]? {
+        for pattern in [
+            #"ytInitialData"\s*\]\s*=\s*(\{.+?\})\s*;"#,
+            #"ytInitialData\s*=\s*(\{.+?\})\s*;</script>"#,
+            #"ytInitialData\s*=\s*(\{.+?\})\s*;"#
+        ] {
+            if let json = firstMatch(pattern, in: html, options: [.dotMatchesLineSeparators]),
+               let data = json.data(using: .utf8),
+               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                return obj
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Networking with retry
+
+    private func performWithRetry(_ request: URLRequest) async throws(YouTubeSearchError) -> Data {
+        var attempt = 0
+        while true {
+            do {
+                let (data, response) = try await session.data(for: request)
+                if let http = response as? HTTPURLResponse {
+                    if http.statusCode == 429 || http.statusCode == 503 {
+                        if attempt < config.maxRetries {
+                            try await backoff(attempt: attempt, response: http)
+                            attempt += 1
+                            continue
+                        }
+                        throw YouTubeSearchError.ipBlocked
+                    }
+                    guard (200..<300).contains(http.statusCode) else {
+                        throw YouTubeSearchError.networkError("HTTP \(http.statusCode)")
+                    }
+                }
+                return data
+            } catch let error as YouTubeSearchError {
+                throw error
+            } catch {
+                // Transient URL errors: retry a bounded number of times.
+                if attempt < config.maxRetries {
+                    try? await backoff(attempt: attempt, response: nil)
+                    attempt += 1
+                    continue
+                }
+                throw YouTubeSearchError.networkError(String(describing: error))
+            }
+        }
+    }
+
+    private func backoff(attempt: Int, response: HTTPURLResponse?) async throws(YouTubeSearchError) {
+        // Honour Retry-After when present, else exponential backoff with jitter.
+        var seconds = config.baseBackoff * pow(2.0, Double(attempt))
+        if let retryAfter = response?.value(forHTTPHeaderField: "Retry-After"),
+           let parsed = Double(retryAfter) {
+            seconds = max(seconds, parsed)
+        }
+        seconds = min(seconds, config.maxBackoff)
+        // Deterministic jitter (no Date/random dependency): vary by attempt.
+        let jitter = 0.1 * Double((attempt % 3) + 1)
+        let nanos = UInt64((seconds + jitter) * 1_000_000_000)
+        do {
+            try await Task.sleep(nanoseconds: nanos)
+        } catch {
+            throw .networkError("Cancelled during backoff")
+        }
+    }
+
+    // MARK: - Regex helper
+
+    private func firstMatch(
+        _ pattern: String,
+        in text: String,
+        options: NSRegularExpression.Options = []
+    ) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, range: range),
+              match.numberOfRanges > 1,
+              let captured = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[captured])
+    }
+
+    // MARK: - Constants
+
+    /// Browser-like user agent used for every request.
+    static let userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+    /// Fallback WEB client version if the page doesn't expose one.
+    static let fallbackClientVersion = "2.20240101.00.00"
+}

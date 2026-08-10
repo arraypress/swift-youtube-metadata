@@ -156,7 +156,66 @@ public enum YouTubeComments {
                 do {
                     let videoId = try VideoID.extract(from: input)
                     try await run(
-                        videoId: videoId,
+                        source: .video(videoId),
+                        sortBy: sortBy,
+                        includeReplies: includeReplies,
+                        configuration: configuration
+                    ) { comment in
+                        continuation.yield(comment)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    // MARK: - Community Post Comments
+
+    /// Fetches the comments on a community post.
+    ///
+    /// Replies are threaded exactly as they are for video comments: each reply
+    /// follows its parent, with ``Comment/isReply`` and ``Comment/parentId``
+    /// set, so a caller can reconstruct the tree from a flat list.
+    ///
+    /// - Parameters:
+    ///   - input: A post ID (`Ugkx…`) or a `youtube.com/post/…` URL.
+    ///   - sortBy: Comment ordering. Defaults to ``CommentSort/top``.
+    ///   - includeReplies: Whether to follow reply threads. Defaults to `true`.
+    ///   - limit: Optional cap on the total number of comments returned.
+    ///   - configuration: Networking/politeness options.
+    /// - Throws: ``YouTubeCommentsError`` on failure.
+    public static func post(
+        _ input: String,
+        sortBy: CommentSort = .top,
+        includeReplies: Bool = true,
+        limit: Int? = nil,
+        configuration: Configuration = .default
+    ) async throws -> [Comment] {
+        var result: [Comment] = []
+        for try await comment in postStream(
+            input, sortBy: sortBy, includeReplies: includeReplies, configuration: configuration
+        ) {
+            result.append(comment)
+            if let limit, result.count >= limit { break }
+        }
+        return result
+    }
+
+    /// Streams a community post's comments as they are fetched.
+    public static func postStream(
+        _ input: String,
+        sortBy: CommentSort = .top,
+        includeReplies: Bool = true,
+        configuration: Configuration = .default
+    ) -> AsyncThrowingStream<Comment, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await run(
+                        source: .post(PostID.extract(from: input)),
                         sortBy: sortBy,
                         includeReplies: includeReplies,
                         configuration: configuration
@@ -174,33 +233,65 @@ public enum YouTubeComments {
 
     // MARK: - Engine
 
+    /// What a comment thread hangs off.
+    ///
+    /// Only the bootstrap differs between the two: once a continuation token is
+    /// in hand, paging, sorting and reply threading are identical.
+    private enum Source {
+        case video(String)
+        case post(String)
+    }
+
     private static func run(
-        videoId: String,
+        source: Source,
         sortBy: CommentSort,
         includeReplies: Bool,
         configuration: Configuration,
         emit: (Comment) -> Void
     ) async throws {
         let client = InnerTubeClient(config: configuration)
-        let boot = try await client.bootstrap(videoId: videoId)
+
+        let boot: InnerTubeClient.Bootstrap
+
+        // Stamped onto every returned comment so a caller can tell which entity
+        // a flat list came from — a video ID for one source, a post ID for the
+        // other.
+        let sourceId: String
+
+        /// Which endpoint services this source's continuations. A post's tokens
+        /// are browse tokens; sending them to `next` yields a well-formed
+        /// response containing no comments at all.
+        let endpoint: InnerTubeClient.Endpoint
+
+        switch source {
+        case .video(let videoId):
+            sourceId = videoId
+            endpoint = .next
+            boot = try await client.bootstrap(videoId: videoId)
+        case .post(let postId):
+            sourceId = postId
+            endpoint = .browse
+            boot = try await client.bootstrap(postId: postId)
+        }
 
         // First page (the bootstrap token is the "Top" ordering).
         var response = try await client.next(
-            token: boot.continuationToken, apiKey: boot.apiKey, clientVersion: boot.clientVersion
+            token: boot.continuationToken, apiKey: boot.apiKey,
+            clientVersion: boot.clientVersion, endpoint: endpoint
         )
 
         // Switch ordering if the caller asked for something other than Top.
         if sortBy != .top, let sortToken = sortToken(in: response, index: sortBy.menuIndex) {
             try await delay(configuration)
             response = try await client.next(
-                token: sortToken, apiKey: boot.apiKey, clientVersion: boot.clientVersion
+                token: sortToken, apiKey: boot.apiKey, clientVersion: boot.clientVersion, endpoint: endpoint
             )
         }
 
         var current: [String: Any]? = response
         while let resp = current {
             try Task.checkCancellation()
-            let page = CommentParser.parse(resp, videoId: videoId)
+            let page = CommentParser.parse(resp, videoId: sourceId)
             let replyTokens = Dictionary(
                 page.replyRequests.map { ($0.parentId, $0.token) },
                 uniquingKeysWith: { first, _ in first }
@@ -210,8 +301,8 @@ public enum YouTubeComments {
                 emit(comment)
                 if includeReplies, !comment.isReply, let token = replyTokens[comment.id] {
                     try await emitReplies(
-                        startToken: token, client: client, boot: boot,
-                        videoId: videoId, configuration: configuration, emit: emit
+                        startToken: token, client: client, boot: boot, endpoint: endpoint,
+                        videoId: sourceId, configuration: configuration, emit: emit
                     )
                 }
             }
@@ -219,7 +310,7 @@ public enum YouTubeComments {
             guard let nextToken = page.nextPageToken else { break }
             try await delay(configuration)
             current = try await client.next(
-                token: nextToken, apiKey: boot.apiKey, clientVersion: boot.clientVersion
+                token: nextToken, apiKey: boot.apiKey, clientVersion: boot.clientVersion, endpoint: endpoint
             )
         }
     }
@@ -230,6 +321,7 @@ public enum YouTubeComments {
         startToken: String,
         client: InnerTubeClient,
         boot: InnerTubeClient.Bootstrap,
+        endpoint: InnerTubeClient.Endpoint,
         videoId: String,
         configuration: Configuration,
         emit: (Comment) -> Void
@@ -239,7 +331,7 @@ public enum YouTubeComments {
             try Task.checkCancellation()
             try await delay(configuration)
             let resp = try await client.next(
-                token: current, apiKey: boot.apiKey, clientVersion: boot.clientVersion
+                token: current, apiKey: boot.apiKey, clientVersion: boot.clientVersion, endpoint: endpoint
             )
             let page = CommentParser.parse(resp, videoId: videoId)
             for reply in page.comments { emit(reply) }

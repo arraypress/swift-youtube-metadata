@@ -24,6 +24,10 @@ let package = Package(
             name: "YouTubeChannel",
             targets: ["YouTubeChannel"]
         ),
+        .library(
+            name: "YouTubeSearch",
+            targets: ["YouTubeSearch"]
+        ),
     ],
     targets: [
         .target(
@@ -53,6 +57,17 @@ let package = Package(
         .testTarget(
             name: "YouTubeChannelTests",
             dependencies: ["YouTubeChannel"]
+        ),
+        // Self-contained sibling target. Shares no code with the other modules
+        // by design — searches YouTube site-wide or within one channel via the
+        // InnerTube search surface.
+        .target(
+            name: "YouTubeSearch",
+            dependencies: []
+        ),
+        .testTarget(
+            name: "YouTubeSearchTests",
+            dependencies: ["YouTubeSearch"]
         ),
         // Example CLI that composes the three self-contained libraries into a
         // full channel → transcripts/comments dump. The libraries still share

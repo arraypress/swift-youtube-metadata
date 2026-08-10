@@ -44,6 +44,17 @@ public enum YouTubeChannelError: Error, LocalizedError, Equatable, Sendable {
     /// - Channel URLs (`/channel/UC…`, `/@handle`, `/c/name`, `/user/name`)
     case invalidChannel
 
+    /// The provided input could not be parsed as a video ID or watch URL.
+    ///
+    /// Distinct from ``invalidChannel`` because the two are reached from
+    /// different entry points, and a caller told to "pass a channel ID" after
+    /// mistyping a video ID has been sent the wrong way.
+    ///
+    /// Valid inputs include:
+    /// - Video IDs (e.g., `"dQw4w9WgXcQ"`)
+    /// - Watch URLs, `youtu.be` links, `/shorts/`, `/embed/`, `/live/`
+    case invalidVideo
+
     /// The channel does not exist, is terminated, or exposes no public uploads.
     case channelUnavailable(channel: String)
 
@@ -71,6 +82,8 @@ public enum YouTubeChannelError: Error, LocalizedError, Equatable, Sendable {
             return "YouTube is blocking this request and requires CAPTCHA verification."
         case .invalidChannel:
             return "Could not parse a YouTube channel. Pass a channel ID (\"UC…\"), a handle (\"@name\"), or a channel URL."
+        case .invalidVideo:
+            return "Could not parse a YouTube video. Pass an 11-character video ID or a watch/youtu.be/shorts URL."
         case .channelUnavailable(let channel):
             return "Channel is unavailable (\(channel)). It may not exist, be terminated, or have no public videos."
         case .consentFailed(let channel):

@@ -28,7 +28,7 @@ enum VideoID {
     /// Extracts a YouTube video ID from a string.
     ///
     /// - Parameter input: A video ID or YouTube URL.
-    /// - Throws: ``YouTubeChannelError/invalidChannel`` if no valid ID can be
+    /// - Throws: ``YouTubeChannelError/invalidVideo`` if no valid ID can be
     ///   extracted. (This module has no dedicated invalid-video case; an
     ///   unparseable video reference is surfaced through the same channel-input
     ///   error.)
@@ -51,6 +51,6 @@ enum VideoID {
             }
         }
 
-        throw .invalidChannel
+        throw .invalidVideo
     }
 }

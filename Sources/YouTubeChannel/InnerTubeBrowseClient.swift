@@ -98,6 +98,74 @@ struct InnerTubeBrowseClient {
 
     // MARK: - browse endpoint
 
+    // MARK: - Raw surfaces
+
+    /// Credentials plus the untouched `ytInitialData` for a page.
+    ///
+    /// The playlists and community tabs need the raw tree because their items
+    /// are not videos; ``bootstrap(url:channel:)`` has already reduced the page
+    /// to a video grid by the time it returns.
+    struct RawBootstrap {
+        let apiKey: String
+        let clientVersion: String
+        let initialData: [String: Any]
+    }
+
+    /// Fetches a page and returns its credentials and raw initial data.
+    func bootstrapRaw(url: URL, subject: String) async throws(YouTubeChannelError) -> RawBootstrap {
+        let html = try await fetchPage(url: url, channel: subject)
+
+        guard let apiKey = firstMatch(#""INNERTUBE_API_KEY":\s*"([a-zA-Z0-9_-]+)""#, in: html) else {
+            if html.contains("g-recaptcha") { throw .requestBlocked }
+            throw .parsingError("Could not extract the InnerTube API key from the page (\(subject)).")
+        }
+        let version = firstMatch(#""INNERTUBE_CONTEXT_CLIENT_VERSION":\s*"([\d.]+)""#, in: html)
+            ?? firstMatch(#""clientVersion":\s*"([\d.]+)""#, in: html)
+            ?? Self.fallbackClientVersion
+
+        guard let initialData = extractInitialData(from: html) else {
+            if html.contains("g-recaptcha") { throw .requestBlocked }
+            throw .parsingError("Could not locate ytInitialData in the page (\(subject)).")
+        }
+
+        return RawBootstrap(apiKey: apiKey, clientVersion: version, initialData: initialData)
+    }
+
+    /// Calls `youtubei/v1/browse` with a continuation token and returns the raw
+    /// JSON response, for surfaces that parse into something other than videos.
+    func browseRaw(
+        token: String,
+        apiKey: String,
+        clientVersion: String
+    ) async throws(YouTubeChannelError) -> [String: Any] {
+        guard let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?key=\(apiKey)&prettyPrint=false") else {
+            throw .parsingError("Invalid InnerTube URL")
+        }
+
+        let body: [String: Any] = [
+            "context": ["client": ["hl": "en", "gl": "US", "clientName": "WEB", "clientVersion": clientVersion]],
+            "continuation": token
+        ]
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            throw .parsingError("Failed to encode browse request body")
+        }
+
+        let data = try await performWithRetry(request)
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            throw .parsingError("Invalid InnerTube JSON response")
+        }
+        return json
+    }
+
     /// Calls `youtubei/v1/browse` with a continuation token and returns the
     /// parsed page.
     func browse(token: String, apiKey: String, clientVersion: String) async throws(YouTubeChannelError) -> ChannelParser.Page {

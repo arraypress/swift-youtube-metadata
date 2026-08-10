@@ -345,6 +345,141 @@ public enum YouTubeChannel {
 
     // MARK: - Engine
 
+    // MARK: - Playlists
+
+    /// Lists the playlists on a channel's playlists tab.
+    ///
+    /// The listing carries identity and size only. To enumerate a playlist's
+    /// videos, pass its ``ChannelPlaylist/id`` to ``playlist(_:limit:configuration:)``.
+    ///
+    /// - Parameters:
+    ///   - input: A channel ID, handle, or channel URL.
+    ///   - limit: Optional cap on the number of playlists returned.
+    ///   - configuration: Networking/politeness options.
+    /// - Throws: ``YouTubeChannelError`` on failure.
+    public static func playlists(
+        _ input: String,
+        limit: Int? = nil,
+        configuration: Configuration = .default
+    ) async throws -> [ChannelPlaylist] {
+        var result: [ChannelPlaylist] = []
+        try await runSurface(
+            url: try ChannelURL.url(from: input, surface: .playlists),
+            subject: input,
+            configuration: configuration,
+            parse: SurfaceParser.playlists,
+            identify: \.id
+        ) { playlist in
+            result.append(playlist)
+            return limit.map { result.count < $0 } ?? true
+        }
+        return result
+    }
+
+    /// Enumerates the videos in a playlist.
+    ///
+    /// - Parameters:
+    ///   - input: A playlist ID (`PL…`, `UU…`, `RD…`) or any URL carrying `list=`.
+    ///   - limit: Optional cap on the number of videos returned.
+    ///   - configuration: Networking/politeness options.
+    /// - Throws: ``YouTubeChannelError`` on failure.
+    public static func playlist(
+        _ input: String,
+        limit: Int? = nil,
+        configuration: Configuration = .default
+    ) async throws -> [ChannelVideo] {
+        var result: [ChannelVideo] = []
+        try await runSurface(
+            url: try ChannelURL.playlistURL(from: input),
+            subject: input,
+            configuration: configuration,
+            parse: SurfaceParser.playlistVideos,
+            identify: \.id
+        ) { video in
+            result.append(video)
+            return limit.map { result.count < $0 } ?? true
+        }
+        return result
+    }
+
+    // MARK: - Community Posts
+
+    /// Reads a channel's community posts.
+    ///
+    /// - Parameters:
+    ///   - input: A channel ID, handle, or channel URL.
+    ///   - limit: Optional cap on the number of posts returned.
+    ///   - configuration: Networking/politeness options.
+    /// - Throws: ``YouTubeChannelError`` on failure.
+    public static func posts(
+        _ input: String,
+        limit: Int? = nil,
+        configuration: Configuration = .default
+    ) async throws -> [ChannelPost] {
+        var result: [ChannelPost] = []
+        try await runSurface(
+            url: try ChannelURL.url(from: input, surface: .posts),
+            subject: input,
+            configuration: configuration,
+            parse: SurfaceParser.posts,
+            identify: \.id
+        ) { post in
+            result.append(post)
+            return limit.map { result.count < $0 } ?? true
+        }
+        return result
+    }
+
+    // MARK: - Surface Engine
+
+    /// Bootstraps a non-video surface and follows its continuations.
+    ///
+    /// Generic over the item type so the playlists tab, the community tab and a
+    /// playlist's contents share one paging loop rather than three copies that
+    /// drift apart.
+    ///
+    /// - Parameter emit: Receives each item and returns whether to keep going,
+    ///   which is how `limit` stops paging rather than merely truncating a list
+    ///   that was fetched in full.
+    private static func runSurface<Item>(
+        url: URL,
+        subject: String,
+        configuration: Configuration,
+        parse: @escaping ([String: Any]) -> SurfaceParser.Page<Item>,
+        identify: (Item) -> String,
+        emit: (Item) -> Bool
+    ) async throws {
+        let client = InnerTubeBrowseClient(config: configuration)
+        let boot = try await client.bootstrapRaw(url: url, subject: subject)
+
+        var seen = Set<String>()
+        let first = parse(boot.initialData)
+        for item in first.items where seen.insert(identify(item)).inserted {
+            if !emit(item) { return }
+        }
+
+        var token = first.nextToken
+        while let current = token {
+            try Task.checkCancellation()
+            try await delay(configuration)
+
+            let json = try await client.browseRaw(
+                token: current, apiKey: boot.apiKey, clientVersion: boot.clientVersion
+            )
+            let page = parse(json)
+
+            // A page that contributes no new items — or repeats its token —
+            // would otherwise loop forever.
+            var contributed = false
+            for item in page.items where seen.insert(identify(item)).inserted {
+                contributed = true
+                if !emit(item) { return }
+            }
+            guard contributed, let next = page.nextToken, next != current else { break }
+            token = next
+        }
+    }
+
     private static func run(
         input: String,
         tab: ContentTab,

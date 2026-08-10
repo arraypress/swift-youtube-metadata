@@ -21,6 +21,18 @@ public enum ContentTab: String, Sendable, CaseIterable, Codable {
     case streams
 }
 
+/// A channel surface whose items are not videos.
+///
+/// Kept separate from ``ContentTab`` because these return different models —
+/// folding them in as extra tab cases would make the return type of a tab fetch
+/// depend on the tab, which the API cannot express.
+public enum ChannelSurface: String, Sendable, CaseIterable, Codable {
+    /// The playlists tab (`/playlists`).
+    case playlists
+    /// The community tab (`/posts`).
+    case posts
+}
+
 /// Normalises the many ways of referring to a YouTube channel into the URL of
 /// one of that channel's tabs.
 ///
@@ -44,29 +56,69 @@ enum ChannelURL {
     /// - Throws: ``YouTubeChannelError/invalidChannel`` when `input` matches no
     ///   known channel form.
     static func url(from input: String, tab: ContentTab = .videos) throws(YouTubeChannelError) -> URL {
+        build(path: try resolvePath(input), segment: tab.rawValue)
+    }
+
+    /// Builds the URL of a channel surface that yields something other than a
+    /// video grid.
+    static func url(from input: String, surface: ChannelSurface) throws(YouTubeChannelError) -> URL {
+        build(path: try resolvePath(input), segment: surface.rawValue)
+    }
+
+    /// Builds the URL of a playlist's own contents page.
+    ///
+    /// Accepts a bare playlist ID or any URL carrying a `list=` parameter.
+    /// Playlist IDs are not all `PL…` — uploads feeds are `UU…`, mixes `RD…`,
+    /// likes `LL…` — so the prefix is not used as a validity test.
+    static func playlistURL(from input: String) throws(YouTubeChannelError) -> URL {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw .invalidChannel }
+
+        let identifier: String
+        if trimmed.lowercased().contains("list=") {
+            guard let extracted = firstMatch("[?&]list=([^&#\\s]+)", in: trimmed) else {
+                throw .invalidChannel
+            }
+            identifier = extracted
+        } else if trimmed.range(of: "^[A-Za-z0-9_-]{2,}$", options: .regularExpression) != nil {
+            identifier = trimmed
+        } else {
+            throw .invalidChannel
+        }
+
+        guard let url = URL(string: "https://www.youtube.com/playlist?list=\(identifier)&hl=en") else {
+            throw .invalidChannel
+        }
+        return url
+    }
+
+    // MARK: - Helpers
+
+    /// Reduces any accepted channel reference to its URL path component.
+    private static func resolvePath(_ input: String) throws(YouTubeChannelError) -> String {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw .invalidChannel }
 
         // 1. Bare channel ID.
         if trimmed.range(of: "^\(channelIDPattern)$", options: .regularExpression) != nil {
-            return build(path: "channel/\(trimmed)", tab: tab)
+            return "channel/\(trimmed)"
         }
 
         // 2. Handle with an explicit "@".
         if trimmed.hasPrefix("@") {
-            return build(path: sanitisePathComponent(trimmed), tab: tab)
+            return sanitisePathComponent(trimmed)
         }
 
         // 3. Any YouTube URL — pull the channel reference out of the path.
         if trimmed.contains("youtube.com") || trimmed.contains("youtu.be") {
             if let id = firstMatch("/(\(channelIDPattern))", in: trimmed) {
-                return build(path: "channel/\(id)", tab: tab)
+                return "channel/\(id)"
             }
             if let handle = firstMatch("/(@[^/?&#\\s]+)", in: trimmed) {
-                return build(path: sanitisePathComponent(handle), tab: tab)
+                return sanitisePathComponent(handle)
             }
             if let legacy = firstMatch("/((?:c|user)/[^/?&#\\s]+)", in: trimmed) {
-                return build(path: sanitisePathComponent(legacy), tab: tab)
+                return sanitisePathComponent(legacy)
             }
             throw .invalidChannel
         }
@@ -74,17 +126,15 @@ enum ChannelURL {
         // 4. A bare token with no scheme and no "@": treat it as a handle, which
         //    is how modern YouTube addresses channels (e.g. "GoogleDevelopers").
         if trimmed.range(of: "^[A-Za-z0-9._-]+$", options: .regularExpression) != nil {
-            return build(path: "@\(trimmed)", tab: tab)
+            return "@\(trimmed)"
         }
 
         throw .invalidChannel
     }
 
-    // MARK: - Helpers
-
-    private static func build(path: String, tab: ContentTab) -> URL {
-        // Path is already sanitised/validated by the callers above.
-        URL(string: "https://www.youtube.com/\(path)/\(tab.rawValue)?hl=en")!
+    private static func build(path: String, segment: String) -> URL {
+        // Path is already sanitised/validated by resolvePath.
+        URL(string: "https://www.youtube.com/\(path)/\(segment)?hl=en")!
     }
 
     /// Strips a trailing `/videos` (or other tab) and query/fragment so we can
@@ -96,7 +146,7 @@ enum ChannelURL {
         }
         while value.hasSuffix("/") { value.removeLast() }
         // Drop a trailing tab segment like "/videos", "/streams", "/featured".
-        for tab in ["/videos", "/streams", "/shorts", "/featured", "/playlists"] where value.hasSuffix(tab) {
+        for tab in ["/videos", "/streams", "/shorts", "/featured", "/playlists", "/posts", "/community", "/about", "/search"] where value.hasSuffix(tab) {
             value.removeLast(tab.count)
             break
         }

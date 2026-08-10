@@ -66,7 +66,7 @@ enum ChannelParser {
 
     // MARK: - Video lockup
 
-    private static func parseVideoLockup(_ lockup: [String: Any]) -> ChannelVideo? {
+    static func parseVideoLockup(_ lockup: [String: Any]) -> ChannelVideo? {
         guard lockup["contentType"] as? String == "LOCKUP_CONTENT_TYPE_VIDEO",
               let id = lockup["contentId"] as? String, !id.isEmpty else { return nil }
 

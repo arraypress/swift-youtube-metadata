@@ -303,7 +303,7 @@ public enum YouTubeTranscript {
     /// Validates the playability status from the InnerTube response.
     ///
     /// Mirrors the Python library's `_assert_playability` check.
-    private static func checkPlayability(_ json: [String: Any], videoId: String) throws {
+    static func checkPlayability(_ json: [String: Any], videoId: String) throws {
         guard let playability = json["playabilityStatus"] as? [String: Any] else { return }
 
         let status = playability["status"] as? String ?? ""
@@ -311,12 +311,16 @@ public enum YouTubeTranscript {
 
         switch status {
         case "LOGIN_REQUIRED":
-            if reason.contains("bot") || reason.contains("Sign in") {
-                throw YouTubeTranscriptError.requestBlocked
-            }
             if reason.contains("inappropriate") {
                 throw YouTubeTranscriptError.videoUnplayable(videoId: videoId, reason: "Age-restricted content")
             }
+            // Any other LOGIN_REQUIRED is YouTube declining to serve us, whether
+            // or not the reason string matches a phrase we recognise. Falling
+            // through here used to let a blocked response reach track
+            // extraction, where the missing captions were misreported as the
+            // uploader having disabled them — a permanent verdict on a
+            // transient problem.
+            throw YouTubeTranscriptError.requestBlocked
         case "ERROR":
             if reason.contains("unavailable") {
                 throw YouTubeTranscriptError.videoUnavailable(videoId: videoId)
@@ -332,11 +336,36 @@ public enum YouTubeTranscript {
     // MARK: - Track Extraction
 
     /// Extracts caption tracks from the InnerTube player response.
-    private static func extractTracks(from playerData: [String: Any], videoId: String) throws -> [TranscriptTrack] {
-        guard let captions = playerData["captions"] as? [String: Any],
-              let renderer = captions["playerCaptionsTracklistRenderer"] as? [String: Any],
-              let rawTracks = renderer["captionTracks"] as? [[String: Any]],
-              !rawTracks.isEmpty else {
+    ///
+    /// The three ways this can fail are deliberately kept apart. Collapsing them
+    /// into ``YouTubeTranscriptError/transcriptsDisabled(videoId:)`` — as this
+    /// once did — tells a caller that a video will *never* have a transcript,
+    /// which is a permanent verdict it should not be handed because a request
+    /// was throttled or because YouTube renamed a key.
+    static func extractTracks(from playerData: [String: Any], videoId: String) throws -> [TranscriptTrack] {
+        // A genuine player response always carries `videoDetails`. Without it we
+        // are looking at a degraded or bot-checked reply, not a video whose
+        // owner turned captions off. Retrying may well succeed.
+        guard playerData["videoDetails"] != nil else {
+            throw YouTubeTranscriptError.requestBlocked
+        }
+
+        // A healthy response that simply has no captions block: the uploader
+        // really has no transcript. This is the only permanent case.
+        guard let captions = playerData["captions"] as? [String: Any] else {
+            throw YouTubeTranscriptError.transcriptsDisabled(videoId: videoId)
+        }
+
+        // A captions block that does not contain the renderer we expect means
+        // the response shape moved under us — the extractor needs updating, and
+        // saying so is far more useful than blaming the video.
+        guard let renderer = captions["playerCaptionsTracklistRenderer"] as? [String: Any] else {
+            throw YouTubeTranscriptError.parsingError(
+                "captions present but playerCaptionsTracklistRenderer missing — YouTube's response shape has changed"
+            )
+        }
+
+        guard let rawTracks = renderer["captionTracks"] as? [[String: Any]], !rawTracks.isEmpty else {
             throw YouTubeTranscriptError.transcriptsDisabled(videoId: videoId)
         }
 
