@@ -159,6 +159,7 @@ public enum YouTubeChannel {
         limit: Int? = nil,
         configuration: Configuration = .default
     ) async throws -> [ChannelVideo] {
+        if let limit, limit <= 0 { return [] }
         var result: [ChannelVideo] = []
         for try await video in stream(input, tab: tab, configuration: configuration) {
             result.append(video)

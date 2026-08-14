@@ -108,11 +108,16 @@ public struct Comment: Codable, Equatable, Sendable, Identifiable {
     public let sponsorBadgeText: String?
 
     /// A permalink to this comment.
+    ///
+    /// Comments fetched from a community post link to the post — for those,
+    /// ``videoId`` carries the post ID, which is never 11 characters.
     public var url: String {
-        let base = "https://www.youtube.com/watch?v=\(videoId)&lc=\(id)"
-        return base
+        videoId.count == 11
+            ? "https://www.youtube.com/watch?v=\(videoId)&lc=\(id)"
+            : "https://www.youtube.com/post/\(videoId)?lc=\(id)"
     }
 
-    /// The video ID this comment belongs to.
+    /// The ID of the video — or, for community-post comments, the post — this
+    /// comment belongs to.
     public let videoId: String
 }

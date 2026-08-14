@@ -62,7 +62,9 @@ public enum YouTubeTranscript {
         let config = URLSessionConfiguration.default
         config.httpCookieAcceptPolicy = .always
         config.httpShouldSetCookies = true
-        config.httpCookieStorage = HTTPCookieStorage.shared
+        // Own cookie storage so the package modules don't share global
+        // consent/session state with the host application.
+        config.httpCookieStorage = HTTPCookieStorage()
         // Explicit timeouts so a hung connection can't block the await forever.
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
@@ -238,7 +240,9 @@ public enum YouTubeTranscript {
             .value: "YES+" + String(html[valueRange]),
             .secure: "TRUE"
         ]) {
-            HTTPCookieStorage.shared.setCookie(cookie)
+            // The session's private jar — the configuration copy still points
+            // at the same storage instance.
+            session.configuration.httpCookieStorage?.setCookie(cookie)
         }
     }
 

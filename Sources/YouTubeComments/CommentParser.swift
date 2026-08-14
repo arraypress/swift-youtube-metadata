@@ -232,7 +232,9 @@ enum CommentParser {
             .trimmingCharacters(in: .whitespaces)
         guard let last = cleaned.last else { return 0 }
         let multipliers: [Character: Double] = ["K": 1_000, "M": 1_000_000, "B": 1_000_000_000]
-        if let mult = multipliers[Character(last.uppercased())] {
+        // `last.uppercased()` is a String, and `Character(_:)` traps on inputs
+        // whose uppercase form is more than one grapheme (e.g. "ß" → "SS").
+        if let key = last.uppercased().first, let mult = multipliers[key] {
             let number = Double(cleaned.dropLast()) ?? 0
             return Int(number * mult)
         }

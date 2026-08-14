@@ -124,6 +124,7 @@ public enum YouTubeSearch {
         limit: Int? = nil,
         configuration: Configuration = .default
     ) async throws -> [SearchVideo] {
+        if let limit, limit <= 0 { return [] }
         var result: [SearchVideo] = []
         for try await video in stream(query, filters: filters, configuration: configuration) {
             result.append(video)
@@ -188,6 +189,7 @@ public enum YouTubeSearch {
         limit: Int? = nil,
         configuration: Configuration = .default
     ) async throws -> [SearchVideo] {
+        if let limit, limit <= 0 { return [] }
         var result: [SearchVideo] = []
         for try await video in channelStream(channel, query: query, configuration: configuration) {
             result.append(video)

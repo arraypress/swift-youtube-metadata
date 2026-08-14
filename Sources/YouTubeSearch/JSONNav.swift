@@ -83,6 +83,7 @@ enum JSONNav {
             let joined = runs.compactMap { $0["text"] as? String }.joined()
             return joined.isEmpty ? nil : joined
         }
+        if let content = dict["content"] as? String, !content.isEmpty { return content }
         return nil
     }
 }

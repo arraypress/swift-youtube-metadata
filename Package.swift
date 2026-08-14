@@ -4,7 +4,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "YouTubeTranscript",
+    name: "swift-youtube-metadata",
     platforms: [
         .macOS(.v13),
         .iOS(.v16),

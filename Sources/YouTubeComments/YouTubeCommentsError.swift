@@ -39,9 +39,6 @@ public enum YouTubeCommentsError: Error, LocalizedError, Equatable, Sendable {
     /// waiting a longer period before retrying.
     case requestBlocked
 
-    /// The video does not exist, has been removed, or is private.
-    case videoUnavailable(videoId: String)
-
     /// Comments are disabled for this video by the uploader,
     /// or the video has no comment surface at all.
     case commentsDisabled(videoId: String)
@@ -75,8 +72,6 @@ public enum YouTubeCommentsError: Error, LocalizedError, Equatable, Sendable {
             return "YouTube is rate-limiting requests from this IP. Try again later or use a different network."
         case .requestBlocked:
             return "YouTube is blocking this request and requires CAPTCHA verification."
-        case .videoUnavailable(let videoId):
-            return "Video is unavailable (\(videoId)). It may have been removed or set to private."
         case .commentsDisabled(let videoId):
             return "Comments are disabled for this video (\(videoId))."
         case .invalidVideoId:

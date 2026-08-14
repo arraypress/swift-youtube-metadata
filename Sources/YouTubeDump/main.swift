@@ -223,6 +223,13 @@ func run(_ opts: Options) async throws {
 // MARK: - Entry
 
 let argv = Array(CommandLine.arguments.dropFirst())
+
+// Asking for help is not an error; only unparseable arguments exit non-zero.
+if argv.contains("--help") || argv.contains("-h") {
+    printUsage()
+    exit(0)
+}
+
 guard let opts = parseArgs(argv) else {
     printUsage()
     exit(argv.isEmpty ? 0 : 1)

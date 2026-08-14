@@ -125,6 +125,7 @@ public enum YouTubeComments {
         limit: Int? = nil,
         configuration: Configuration = .default
     ) async throws -> [Comment] {
+        if let limit, limit <= 0 { return [] }
         var result: [Comment] = []
         for try await comment in stream(
             input, sortBy: sortBy, includeReplies: includeReplies, configuration: configuration
@@ -194,6 +195,7 @@ public enum YouTubeComments {
         limit: Int? = nil,
         configuration: Configuration = .default
     ) async throws -> [Comment] {
+        if let limit, limit <= 0 { return [] }
         var result: [Comment] = []
         for try await comment in postStream(
             input, sortBy: sortBy, includeReplies: includeReplies, configuration: configuration
@@ -289,6 +291,8 @@ public enum YouTubeComments {
         }
 
         var current: [String: Any]? = response
+        var seenIds = Set<String>()
+        var lastToken: String?
         while let resp = current {
             try Task.checkCancellation()
             let page = CommentParser.parse(resp, videoId: sourceId)
@@ -297,7 +301,12 @@ public enum YouTubeComments {
                 uniquingKeysWith: { first, _ in first }
             )
 
-            for comment in page.comments {
+            // A page with comments but no new IDs (or a repeated token) would
+            // loop forever — the same guard the channel and search pagers
+            // carry, which never made it here.
+            var contributed = false
+            for comment in page.comments where seenIds.insert(comment.id).inserted {
+                contributed = true
                 emit(comment)
                 if includeReplies, !comment.isReply, let token = replyTokens[comment.id] {
                     try await emitReplies(
@@ -307,7 +316,8 @@ public enum YouTubeComments {
                 }
             }
 
-            guard let nextToken = page.nextPageToken else { break }
+            guard contributed, let nextToken = page.nextPageToken, nextToken != lastToken else { break }
+            lastToken = nextToken
             try await delay(configuration)
             current = try await client.next(
                 token: nextToken, apiKey: boot.apiKey, clientVersion: boot.clientVersion, endpoint: endpoint
@@ -327,6 +337,7 @@ public enum YouTubeComments {
         emit: (Comment) -> Void
     ) async throws {
         var token: String? = startToken
+        var seenIds = Set<String>()
         while let current = token {
             try Task.checkCancellation()
             try await delay(configuration)
@@ -334,9 +345,16 @@ public enum YouTubeComments {
                 token: current, apiKey: boot.apiKey, clientVersion: boot.clientVersion, endpoint: endpoint
             )
             let page = CommentParser.parse(resp, videoId: videoId)
-            for reply in page.comments { emit(reply) }
-            // A reply response's continuation (if any) is a "show more replies".
-            token = page.replyRequests.first?.token
+            var contributed = false
+            for reply in page.comments where seenIds.insert(reply.id).inserted {
+                contributed = true
+                emit(reply)
+            }
+            // A reply response's continuation (if any) is a "show more
+            // replies"; a page contributing nothing new (or repeating the
+            // token) ends the thread rather than looping on it.
+            let next = page.replyRequests.first?.token
+            token = (contributed && next != current) ? next : nil
         }
     }
 

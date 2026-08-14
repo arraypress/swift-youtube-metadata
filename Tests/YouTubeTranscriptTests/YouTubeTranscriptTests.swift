@@ -294,9 +294,20 @@ final class YouTubeTranscriptTests: XCTestCase {
         XCTAssertNotEqual(YouTubeTranscriptError.ipBlocked, .requestBlocked)
     }
 
-    // MARK: - Integration Tests (require network)
+    // MARK: - Integration Tests (require network, opt-in)
+
+    /// Set `YT_LIVE_TESTS=1` to exercise the real InnerTube endpoints — the
+    /// same gate the comments module's live test uses, so a plain `swift test`
+    /// never depends on the network.
+    private func requireLiveTests() throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["YT_LIVE_TESTS"] == "1",
+            "Set YT_LIVE_TESTS=1 to run live network tests."
+        )
+    }
 
     func testFetchRickAstley() async throws {
+        try requireLiveTests()
         let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ")
 
         XCTAssertFalse(result.segments.isEmpty)
@@ -312,12 +323,14 @@ final class YouTubeTranscriptTests: XCTestCase {
     }
 
     func testFetchWithFullUrl() async throws {
+        try requireLiveTests()
         let result = try await YouTubeTranscript.fetch("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
         XCTAssertFalse(result.segments.isEmpty)
         XCTAssertEqual(result.videoId, "dQw4w9WgXcQ")
     }
 
     func testFetchMetadataFields() async throws {
+        try requireLiveTests()
         let result = try await YouTubeTranscript.fetch("dQw4w9WgXcQ")
         let video = try XCTUnwrap(result.video)
 
@@ -331,6 +344,7 @@ final class YouTubeTranscriptTests: XCTestCase {
     }
 
     func testListAvailableTranscripts() async throws {
+        try requireLiveTests()
         let list = try await YouTubeTranscript.list("dQw4w9WgXcQ")
 
         XCTAssertEqual(list.videoId, "dQw4w9WgXcQ")
@@ -339,7 +353,8 @@ final class YouTubeTranscriptTests: XCTestCase {
         XCTAssertTrue(list.availableLanguages.contains(where: { $0.hasPrefix("en") }))
     }
 
-    func testFetchNonexistentVideoThrows() async {
+    func testFetchNonexistentVideoThrows() async throws {
+        try requireLiveTests()
         do {
             _ = try await YouTubeTranscript.fetch("xxxxxxxxxxx")
             XCTFail("Should throw for nonexistent video")

@@ -133,8 +133,17 @@ enum ChannelURL {
     }
 
     private static func build(path: String, segment: String) -> URL {
-        // Path is already sanitised/validated by resolvePath.
-        URL(string: "https://www.youtube.com/\(path)/\(segment)?hl=en")!
+        // Assembled from components so anything URL-illegal in the path — a
+        // pasted handle like "@my channel" survives resolvePath — is percent-
+        // encoded rather than trapping `URL(string:)`. A nonsense handle then
+        // surfaces as `channelUnavailable`, the same way the search module
+        // treats it.
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "www.youtube.com"
+        components.path = "/\(path)/\(segment)"
+        components.queryItems = [URLQueryItem(name: "hl", value: "en")]
+        return components.url!
     }
 
     /// Strips a trailing `/videos` (or other tab) and query/fragment so we can
