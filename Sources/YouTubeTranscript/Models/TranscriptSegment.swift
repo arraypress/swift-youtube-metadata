@@ -34,29 +34,4 @@ public struct TranscriptSegment: Codable, Equatable, Sendable {
     /// The language code of this segment (e.g., `"en"`, `"de"`).
     public let language: String
 
-    /// The end time in seconds (`start + duration`).
-    public var end: Double {
-        start + duration
-    }
-
-    /// The start time formatted as `"M:SS"` or `"H:MM:SS"` for longer videos.
-    ///
-    /// ```swift
-    /// // "0:00", "1:23", "1:05:30"
-    /// print(segment.formattedStart)
-    /// ```
-    public var formattedStart: String {
-        Self.formatTimestamp(start)
-    }
-
-    /// Formats a time interval in seconds to `"M:SS"` or `"H:MM:SS"`.
-    internal static func formatTimestamp(_ seconds: Double) -> String {
-        let total = Int(seconds)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        return h > 0
-            ? String(format: "%d:%02d:%02d", h, m, s)
-            : String(format: "%d:%02d", m, s)
-    }
 }

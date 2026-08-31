@@ -50,30 +50,4 @@ public struct VideoMetadata: Codable, Equatable, Sendable {
     /// Whether this video is or was a live stream.
     public let isLive: Bool
 
-    /// The full YouTube watch URL.
-    public var url: String {
-        "https://www.youtube.com/watch?v=\(videoId)"
-    }
-
-    /// The duration formatted as `"M:SS"` or `"H:MM:SS"`.
-    ///
-    /// ```swift
-    /// // "3:32", "1:05:30"
-    /// print(video.formattedDuration)
-    /// ```
-    public var formattedDuration: String {
-        TranscriptSegment.formatTimestamp(Double(lengthSeconds))
-    }
-
-    /// The view count formatted with locale-appropriate grouping separators.
-    ///
-    /// ```swift
-    /// // "1,500,000,000"
-    /// print(video.formattedViewCount)
-    /// ```
-    public var formattedViewCount: String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: viewCount)) ?? "\(viewCount)"
-    }
 }
