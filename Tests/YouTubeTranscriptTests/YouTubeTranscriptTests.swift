@@ -62,6 +62,13 @@ final class YouTubeTranscriptTests: XCTestCase {
         XCTAssertEqual(HTMLUtils.unescape("&amp;"), "&")
         XCTAssertEqual(HTMLUtils.unescape("&lt;b&gt;"), "<b>")
         XCTAssertEqual(HTMLUtils.unescape("it&#39;s"), "it's")
+        // YouTube escapes caption text twice: ">>" (a speaker change) arrives as &amp;gt;&amp;gt;.
+        XCTAssertEqual(HTMLUtils.unescape("&amp;gt;&amp;gt; Hello there"), ">> Hello there")
+        XCTAssertEqual(HTMLUtils.unescape("&amp;quot;Hi&amp;quot;"), "\"Hi\"")
+        XCTAssertEqual(HTMLUtils.unescape("it&#x27;s"), "it's", "hex entities too")
+        XCTAssertEqual(HTMLUtils.unescape("AT&T &unknown; 5 & 6"), "AT&T &unknown; 5 & 6", "what is not an entity stays")
+        // The same answer however many times it is asked (the old order was a dictionary's).
+        for _ in 0..<20 { XCTAssertEqual(HTMLUtils.unescape("&amp;gt;&amp;gt;"), ">>") }
         XCTAssertEqual(HTMLUtils.unescape("&quot;hello&quot;"), "\"hello\"")
     }
 
